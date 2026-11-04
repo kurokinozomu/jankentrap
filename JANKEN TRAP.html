@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JANKEN TRAP</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+:root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(ellipse at top,#1e1b4b,#070916 70%) #070916;color:#e5e7f5;font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif}
+@keyframes pop{from{transform:scale(.5);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes glow{0%,100%{box-shadow:0 0 4px #a78bfa}50%{box-shadow:0 0 16px #fbbf24}}
+.pop{animation:pop .3s ease-out}.glow{animation:glow 1.2s infinite}
+.btn{padding:.6rem 1rem;border-radius:.6rem;background:linear-gradient(#6d28d9,#3730a3);border:1px solid #fbbf24;font-weight:700}
+.btn:disabled{opacity:.35}
+</style></head>
+<body><div id="root" class="h-full"></div>
+<script type="text/babel">
+const {useState}=React;
+// ---- カード定義(新カードはここに追加) ----
+const C={
+ gc:{n:'グーカウンター',t:'t',k:'cnt',h:0,i:'✊',d:'相手がグーを出したら15ダメージ'},
+ cc:{n:'チョキカウンター',t:'t',k:'cnt',h:1,i:'✌️',d:'相手がチョキを出したら15ダメージ'},
+ pc:{n:'パーカウンター',t:'t',k:'cnt',h:2,i:'✋',d:'相手がパーを出したら15ダメージ'},
+ wall:{n:'鉄壁の守り',t:'t',k:'wall',i:'🛡️',d:'次にジャンケンで負けた際のダメージを0にする'},
+ refl:{n:'ダメージ反射',t:'t',k:'refl',i:'🪞',d:'次に受ける通常ジャンケンダメージの50%を相手に反射する'},
+ scry:{n:'千里眼',t:'n',k:'scry',i:'👁️',d:'相手の設置済みトラップをランダムに1枚確認'}};
+const IDS=Object.keys(C),HANDS=['✊','✌️','✋'],HN=['グー','チョキ','パー'],MAXC=3,DECK=15;
+const mk=c=>Object.fromEntries(IDS.map(i=>[i,c]));
+const defDeck=()=>Object.fromEntries(IDS.map((i,k)=>[i,k<6?2:1]));
+const total=d=>IDS.reduce((s,i)=>s+d[i],0);
+const valid=d=>total(d)===DECK&&IDS.every(i=>d[i]>=0&&d[i]<=MAXC);
+const loadDeck=()=>{try{const d=JSON.parse(localStorage.getItem('jt_deck'));if(d&&IDS.every(i=>Number.isInteger(d[i]))&&valid(d))return d}catch(e){}return defDeck()};
+const saveDeck=d=>{try{localStorage.setItem('jt_deck',JSON.stringify(d))}catch(e){}};
+const shuf=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
+const rnd=n=>Math.floor(Math.random()*n);
+const beats=(a,b)=>(a-b+3)%3===2;
+let UID=1;
+// ---- ゲームロジック(UIと分離) ----
+function draw(g,p,n=1){for(let k=0;k<n;k++){
+ if(!g.deck[p].length)g.deck[p]=shuf(g.disc[p].splice(0));
+ if(!g.deck[p].length)return;
+ const c=g.deck[p].pop();
+ if(g.hand[p].length<3)g.hand[p].push(c);else g.disc[p].push(c);}}
+function newGame(deck,diff){
+ const ex=d=>shuf(IDS.flatMap(i=>Array(d[i]).fill(i)));
+ const g={diff,turn:1,phase:'prep',hp:[100,100],deck:[ex(deck),ex(defDeck())],disc:[[],[]],hand:[[],[]],traps:[[],[]],u:[{},{}],log:[],hist:[],H:null,over:null};
+ draw(g,0,3);draw(g,1,3);return g;}
+function play(g,p,idx){
+ const id=g.hand[p][idx];if(!id)return false;const c=C[id];const me=p===0?'あなた':'CPU';
+ if(c.t==='n'){if(g.u[p].n)return false;g.u[p].n=1;g.hand[p].splice(idx,1);g.disc[p].push(id);
+  if(c.k==='draw2')draw(g,p,2);
+  if(c.k==='heal')g.hp[p]=Math.min(100,g.hp[p]+15);
+  if(c.k==='brk'&&g.traps[1-p].length){const [t]=g.traps[1-p].splice(rnd(g.traps[1-p].length),1);g.disc[1-p].push(t.id);g.log.push(`${me}の${c.n}:${C[t.id].n}を破壊!`);return true}
+  if(c.k==='scry'&&g.traps[1-p].length&&p===0){const t=g.traps[1-p][rnd(g.traps[1-p].length)];t.seen=true;g.log.push(`千里眼:相手のトラップは「${C[t.id].n}」`);return true}
+  g.log.push(`${me}は${c.n}を使用`);return true}
+ if(g.u[p].t||g.traps[p].length>=1)return false;
+ g.u[p].t=1;g.hand[p].splice(idx,1);g.traps[p].push({id,t:g.turn,u:UID++});g.log.push(`${me}がトラップを裏向きで設置`);return true}
+function resolve(g,a,b){
+ const H=[a,b];g.H=H;g.hist.push(a);g.phase='res';
+ const w=a===b?-1:(beats(a,b)?0:1),L=w<0?-1:1-w;let jd=w<0?0:20,blocked=false;
+ g.log.push(w<0?'あいこ!':w===0?'あなたの勝ち!':'CPUの勝ち!');
+ const fired=[[],[]];
+ const fire=(o,t)=>{g.traps[o]=g.traps[o].filter(x=>x!==t);g.disc[o].push(t.id);fired[o].push(t.u);g.log.push(`${o?'CPU':'あなた'}の「${C[t.id].n}」発動!`)};
+ const act=[[],[]];[0,1].forEach(o=>g.traps[o].forEach(t=>{if(t.t<g.turn)act[o].push(t)}));
+ const list=[...act[0].map(t=>[0,t]),...act[1].map(t=>[1,t])].sort((x,y)=>x[1].u-y[1].u);
+ const hasWall=o=>act[o].some(t=>C[t.id].k==='wall');
+ for(const [o,t] of list){const c=C[t.id];
+  if(c.k==='cnt'&&H[1-o]===c.h){fire(o,t);g.hp[1-o]-=15;g.log.push(`15ダメージ!`)}
+  if(c.k==='wall'&&L===o&&jd>0&&!blocked){fire(o,t);jd=0;blocked=true;g.log.push('ダメージを無効化')}
+  if(c.k==='refl'&&L===o&&jd>0&&!hasWall(o)){fire(o,t);g.hp[1-o]-=Math.floor(jd/2);g.log.push(`${Math.floor(jd/2)}ダメージを反射!`)}}
+ if(L>=0&&jd>0){g.hp[L]-=jd;g.log.push(`${L?'CPU':'あなた'}は${jd}ダメージ`)}
+ g.hp=g.hp.map(h=>Math.max(0,h));
+ if(g.hp[0]<=0||g.hp[1]<=0){g.over=g.hp[0]<=0&&g.hp[1]<=0?'draw':g.hp[1]<=0?'win':'lose';g.phase='end'}}
+function predict(h){const r=h.slice(-8);if(!r.length)return -1;const c=[0,0,0];r.forEach((x,i)=>c[x]+=1+i/r.length);return c.indexOf(Math.max(...c))}
+function cpuPrep(g){ // 参照するのはCPU自身の手札と公開情報(プレイヤーの出した手の履歴・トラップ枚数)のみ
+ const h=g.hand[1],d=g.diff,go=id=>{const i=h.indexOf(id);if(i>=0)play(g,1,i)};
+ if(d==='easy'){for(let k=0;k<2;k++)if(h.length&&Math.random()<.4)play(g,1,rnd(h.length));return}
+ if(g.hp[1]<=70)go('heal');if(h.length<=3)go('draw2');
+ if(g.traps[0].length)go('brk');if(Math.random()<.3)go('scry');
+ if(g.traps[1].length<1){
+  if(d==='hard'){const p=predict(g.hist);if(p>=0&&Math.random()<.7)go(['gc','cc','pc'][p])}
+  go(['wall','refl','gc','cc','pc'][rnd(5)]);
+  const ti=h.findIndex(x=>C[x].t==='t');if(ti>=0&&Math.random()<.5)play(g,1,ti)}}
+function cpuHand(g){if(g.diff==='hard'){const p=predict(g.hist);if(p>=0&&Math.random()<.65)return (p+2)%3}return rnd(3)}
+// ---- UI ----
+const Card=({id,onClick,sel,w})=>{const c=C[id];return <button onClick={onClick} className={`pop shrink-0 rounded-lg border p-1 flex flex-col items-center justify-center aspect-[2/3] ${w||'w-[18%]'} ${c.t==='t'?'border-purple-400 bg-purple-950':'border-blue-400 bg-blue-950'} ${sel?'glow':''}`}><div className="text-2xl">{c.i}</div><div className="text-[10px] leading-tight text-center">{c.n}</div><div className="text-[9px] text-yellow-300">{c.t==='t'?'トラップ':'通常'}</div></button>};
+const Hp=({v,l})=><div><div className="flex justify-between text-xs"><span>{l}</span><span>{v}/100</span></div><div className="h-3 bg-gray-800 rounded overflow-hidden"><div className={`h-full transition-all duration-700 ${v>50?'bg-green-500':v>25?'bg-yellow-500':'bg-red-500'}`} style={{width:v+'%'}}/></div></div>;
+const Wrap=({title,back,children})=><div className="max-w-md mx-auto p-4 min-h-full flex flex-col gap-3"><div className="flex items-center gap-2">{back&&<button className="btn" onClick={back}>←</button>}<h2 className="text-xl font-bold text-yellow-300">{title}</h2></div>{children}</div>;
+function DeckEdit({back}){
+ const [d,setD]=useState(loadDeck),[m,setM]=useState('');const t=total(d);
+ const ch=(i,x)=>setD({...d,[i]:Math.max(0,Math.min(MAXC,d[i]+x))});
+ return <Wrap title="デッキ編集" back={back}>
+  <div className={`font-bold ${t===DECK?'text-green-400':'text-red-400'}`}>{t}/{DECK}枚(同名カードは最大{MAXC}枚)</div>
+  {IDS.map(i=><div key={i} className="flex items-center gap-2 bg-slate-900/70 rounded p-2"><span className="text-2xl">{C[i].i}</span><div className="flex-1 text-sm"><b>{C[i].n}</b><div className="text-xs text-slate-400">{C[i].d}</div></div><button className="btn !px-3" onClick={()=>ch(i,-1)}>−</button><b className="w-4 text-center">{d[i]}</b><button className="btn !px-3" onClick={()=>ch(i,1)}>+</button></div>)}
+  <div className="flex gap-2"><button className="btn flex-1" disabled={t!==DECK} onClick={()=>{saveDeck(d);setM('保存しました')}}>保存</button><button className="btn flex-1" onClick={()=>{setD(defDeck());setM('')}}>初期デッキ</button></div>
+  <div className="text-sm text-yellow-300">{m}</div></Wrap>}
+function App(){
+ const [s,setS]=useState('title'),[g,setG]=useState(null),[sel,setSel]=useState(null);
+ const act=fn=>setG(o=>{const n=structuredClone(o);fn(n);return n});
+ const start=d=>{setG(newGame(loadDeck(),d));setSel(null);setS('battle')};
+ const choose=h=>act(n=>{if(n.phase!=='prep')return;cpuPrep(n);resolve(n,h,cpuHand(n))});
+ const next=()=>{setSel(null);act(n=>{if(n.phase!=='res')return;n.turn++;n.phase='prep';n.u=[{},{}];n.log=[];n.H=null;draw(n,0);draw(n,1)})};
+ const Menu=(l,f,k)=><button key={k||l} className="btn w-full" onClick={f}>{l}</button>;
+ if(s==='title')return <div className="h-full flex flex-col items-center justify-center gap-6" onClick={()=>setS('menu')}><div className="text-6xl">✊✌️✋</div><h1 className="text-4xl font-black tracking-widest text-yellow-300">JANKEN TRAP</h1><p className="text-slate-400 animate-pulse">タップしてスタート</p></div>;
+ if(s==='menu')return <Wrap title="メインメニュー">{Menu('⚔️ CPU対戦',()=>setS('diff'))}{Menu('🗂️ デッキ編集',()=>setS('deck'))}{Menu('📖 カード一覧',()=>setS('cards'))}{Menu('❓ ルール説明',()=>setS('rules'))}</Wrap>;
+ if(s==='diff')return <Wrap title="難易度選択" back={()=>setS('menu')}>{[['easy','EASY','ランダム中心'],['normal','NORMAL','HP・手札・トラップを考慮'],['hard','HARD','あなたの手の傾向を分析']].map(([k,l,e])=><button key={k} className="btn w-full" onClick={()=>start(k)}>{l}<div className="text-xs font-normal">{e}</div></button>)}</Wrap>;
+ if(s==='deck')return <DeckEdit back={()=>setS('menu')}/>;
+ if(s==='cards')return <Wrap title="カード一覧" back={()=>setS('menu')}>{IDS.map(i=><div key={i} className="flex gap-3 items-center bg-slate-900/70 rounded p-2"><Card id={i} w="w-16"/><div className="text-sm"><b>{C[i].n}</b><div className="text-slate-400">{C[i].d}</div></div></div>)}</Wrap>;
+ if(s==='rules')return <Wrap title="ルール" back={()=>setS('menu')}><ul className="list-disc pl-5 space-y-1 text-sm"><li>HPは双方100。0にしたら勝利、同時なら引き分け。</li><li>ジャンケンに勝つと20ダメージ。あいこはダメージなし。</li><li>毎ターン1枚ドロー。手札上限3枚(超過分は捨て札)。</li><li>準備フェーズに通常カード1枚・トラップ1枚まで使用可能。</li><li>トラップは裏向きで1枚だけ設置できます。設置した次のターンから発動します。</li><li>複数のトラップは設置順に処理されます。</li><li>山札が尽きたら捨て札を混ぜて補充します。</li><li>デッキは15枚、同名カードは最大{MAXC}枚です。</li></ul></Wrap>;
+ if(s==='result'){const r=g.over;return <div className="h-full flex flex-col items-center justify-center gap-5 pop"><div className="text-7xl">{r==='win'?'🏆':r==='lose'?'💀':'🤝'}</div><h2 className="text-3xl font-black text-yellow-300">{r==='win'?'勝利!':r==='lose'?'敗北…':'引き分け'}</h2><div className="text-slate-400">{g.turn}ターンで決着</div><div className="w-60 space-y-2">{Menu('もう一度',()=>start(g.diff))}{Menu('メニューへ',()=>setS('menu'))}</div></div>}
+ // battle
+ const sc=sel!=null?g.hand[0][sel]:null,prep=g.phase==='prep';
+ const canUse=sc&&prep&&(C[sc].t==='n'?!g.u[0].n:!g.u[0].t&&g.traps[0].length<1);
+ return <div className="max-w-md mx-auto h-full flex flex-col p-2 gap-2 relative">
+  <div className="space-y-1"><Hp v={g.hp[1]} l={`CPU(${g.diff.toUpperCase()})`}/><div className="flex justify-between text-xs"><span>🃏 手札 {g.hand[1].length}枚 / 山札 {g.deck[1].length}</span><span className="flex gap-1">{[0].map(i=>{const t=g.traps[1][i];return <span key={i} className={`px-1 rounded border ${t?'border-purple-400 bg-purple-900':'border-slate-700 border-dashed'}`}>{t?(t.seen?C[t.id].i:'🂠'):'—'}</span>})}</span></div></div>
+  <div className="flex-1 flex flex-col items-center justify-center rounded-xl border border-indigo-900 bg-black/30 p-2 overflow-auto">
+   <div className="text-xs text-slate-400">TURN {g.turn}</div>
+   {g.H?<div key={g.turn} className="pop flex items-center gap-6 text-5xl my-1"><span>{HANDS[g.H[0]]}</span><span className="text-base text-yellow-300">VS</span><span>{HANDS[g.H[1]]}</span></div>:<div className="my-2 text-slate-400 text-sm">{prep?'カードを使うか、手を選んでください':''}</div>}
+   <div className="text-xs text-center space-y-0.5">{g.log.map((l,i)=><div key={i} className={/ダメージ|勝ち|発動/.test(l)?'text-yellow-300':''}>{l}</div>)}</div></div>
+  <div className="space-y-1"><div className="flex gap-1 items-center text-xs"><span>トラップ:</span>{[0].map(i=>{const t=g.traps[0][i];return <span key={i} className={`px-1 rounded border ${t?'border-purple-400 bg-purple-900':'border-slate-700 border-dashed'}`}>{t?C[t.id].i+C[t.id].n:'—'}</span>})}</div>
+   <Hp v={g.hp[0]} l="あなた"/>
+   <div className="flex gap-1.5 justify-center min-h-[96px]">{g.hand[0].map((id,i)=><Card key={i+id} id={id} sel={sel===i} onClick={()=>setSel(i)}/>)}</div>
+   <div className="grid grid-cols-3 gap-2">{HANDS.map((e,i)=><button key={i} className="btn text-2xl" disabled={!prep} onClick={()=>choose(i)}>{e}<div className="text-[10px]">{HN[i]}</div></button>)}</div>
+   {g.phase==='res'&&<button className="btn w-full" onClick={next}>次のターンへ ▶</button>}
+   {g.phase==='end'&&<button className="btn w-full glow" onClick={()=>setS('result')}>結果を見る ▶</button>}</div>
+  {sc&&<div className="absolute inset-0 bg-black/70 flex items-center justify-center p-6" onClick={()=>setSel(null)}><div className="pop bg-slate-900 border border-yellow-400 rounded-xl p-4 w-full text-center space-y-3" onClick={e=>e.stopPropagation()}><div className="text-6xl">{C[sc].i}</div><div className="text-lg font-bold">{C[sc].n}</div><div className="text-xs text-yellow-300">{C[sc].t==='t'?'トラップカード(裏向きで設置)':'通常カード'}</div><p className="text-sm">{C[sc].d}</p><div className="flex gap-2"><button className="btn flex-1" disabled={!canUse} onClick={()=>{const i=sel;setSel(null);act(n=>{if(n.phase==='prep')play(n,0,i)})}}>{C[sc].t==='t'?'設置する':'使用する'}</button><button className="btn flex-1" onClick={()=>setSel(null)}>閉じる</button></div>{!canUse&&prep&&<div className="text-xs text-red-300">このターンの使用枠/設置枠がありません</div>}</div></div>}
+ </div>}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script></body></html>
